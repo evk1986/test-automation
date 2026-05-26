@@ -1,15 +1,25 @@
 package com.internal.netatlas.enrich.service;
 
 import com.internal.netatlas.enrich.model.EnrichmentResult;
-import com.internal.netatlas.enrich.model.NormalizedRecord;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+
+import java.util.UUID;
 
 @Service
 public class DataEnricherService {
-    public EnrichmentResult enrich(NormalizedRecord record) {
-        // Implement enrichment logic for v3 contract
-        EnrichmentResult result = new EnrichmentResult();
-        result.setEnrichedFields(record.getNormalizedPayload());
-        return result;
+
+    private final DataEnricherRepository dataEnricherRepository;
+
+    @Autowired
+    public DataEnricherService(DataEnricherRepository dataEnricherRepository) {
+        this.dataEnricherRepository = dataEnricherRepository;
+    }
+
+    public EnrichmentResult enrich(String message, String idempotencyKey) {
+        // Implement enrichment logic here
+        EnrichmentResult enrichmentResult = new EnrichmentResult(UUID.randomUUID().toString(), message, idempotencyKey);
+        dataEnricherRepository.save(enrichmentResult);
+        return enrichmentResult;
     }
 }
