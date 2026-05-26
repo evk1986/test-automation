@@ -1,17 +1,14 @@
 package com.internal.netatlas.normalize.mapper;
 
-import com.internal.netatlas.normalize.model.CanonicalInterfaceRecord;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.internal.netatlas.normalize.model.CanonicalInterface;
 import com.internal.netatlas.normalize.model.NormalizedRecord;
-import com.internal.netatlas.normalize.model.eapi.AristaEosResponse;
 
-import org.springframework.stereotype.Component;
-
-@Component
 public class AristaEosMapper {
-    public NormalizedRecord map(AristaEosResponse response) {
-        CanonicalInterfaceRecord interfaceRecord = new CanonicalInterfaceRecord();
-        interfaceRecord.setInterfaceName(response.getInterfaceName());
-        interfaceRecord.setOperationalStatus(response.getOperationalStatus() != null ? response.getOperationalStatus() : "unknown");
-        return new NormalizedRecord(interfaceRecord);
+    public NormalizedRecord map(JsonNode eosResponse) {
+        NormalizedRecord record = new NormalizedRecord();
+        record.setCanonicalType("AristaEOS");
+        // Add additional mapping logic here
+        return record;
     }
 }

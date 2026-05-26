@@ -1,17 +1,20 @@
 package com.internal.netatlas.normalize.service;
 
-import com.internal.netatlas.normalize.mapper.AristaEosEapiMapper;
+import com.internal.netatlas.normalize.mapper.AristaEosMapper;
 import com.internal.netatlas.normalize.model.NormalizedRecord;
-import com.internal.netatlas.normalize.model.JsonNode;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
 
+@Service
 public class SchemaNormalizerService {
-    private final AristaEosEapiMapper aristaEosEapiMapper;
+    private final AristaEosMapper aristaEosMapper;
 
-    public SchemaNormalizerService(AristaEosEapiMapper aristaEosEapiMapper) {
-        this.aristaEosEapiMapper = aristaEosEapiMapper;
+    @Autowired
+    public SchemaNormalizerService(AristaEosMapper aristaEosMapper) {
+        this.aristaEosMapper = aristaEosMapper;
     }
 
-    public NormalizedRecord normalize(JsonNode eapiResponse) {
-        return aristaEosEapiMapper.map(eapiResponse);
+    public NormalizedRecord normalize(JsonNode eosResponse) {
+        return aristaEosMapper.map(eosResponse);
     }
 }
