@@ -10,7 +10,7 @@ public class ImplementSchemaNormalizerMapperForAService {
 
     public String execute() {
         log.info("Implement Schema-Normalizer mapper for Arista EOS eAPI response — processing");
-        // Map Arista EOS eAPI response to canonical InterfaceRecord DTO, handle missing operational-status field, and update Schem
-        return "TES-10: processing complete";
+        // Add mapper for Arista EOS eAPI response to canonical InterfaceRecord DTO, handle missing operational-status field, and u
+        return "TES-24: processing complete";
     }
 }

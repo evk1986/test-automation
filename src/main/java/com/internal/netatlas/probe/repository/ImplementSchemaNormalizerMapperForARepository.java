@@ -4,5 +4,5 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 public class ImplementSchemaNormalizerMapperForARepository {
-    // TES-10 — persistence layer
+    // TES-24 — persistence layer
 }
