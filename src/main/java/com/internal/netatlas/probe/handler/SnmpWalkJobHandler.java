@@ -1,40 +1,42 @@
 package com.internal.netatlas.probe.handler;
 
-import com.hazelcast.core.Hazelcast;
+import com.internal.netatlas.probe.model.ProbeJob;
+import com.internal.netatlas.probe.service.NetconfBatchRetryService;
 import com.hazelcast.core.HazelcastInstance;
-import com.internal.netatlas.probe.model.ProbeJobMessage;
-import com.internal.netatlas.probe.service.SnmppWalkJobService;
+import com.hazelcast.core.ILock;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cloud.aws.messaging.core.QueueMessagingTemplate;
+import org.springframework.cloud.aws.messaging.core.SqsMessageHeaders;
 import org.springframework.cloud.aws.messaging.listener.SqsMessageDeletionPolicy;
 import org.springframework.cloud.aws.messaging.listener.annotation.SqsListener;
 import org.springframework.messaging.handler.annotation.Headers;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.stereotype.Service;
 
-import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 @Service
 public class SnmpWalkJobHandler {
 
-    private final SnmppWalkJobService snmppWalkJobService;
+    private final NetconfBatchRetryService netconfBatchRetryService;
     private final HazelcastInstance hazelcastInstance;
 
     @Autowired
-    public SnmpWalkJobHandler(SnmppWalkJobService snmppWalkJobService, HazelcastInstance hazelcastInstance) {
-        this.snmppWalkJobService = snmppWalkJobService;
+    public SnmpWalkJobHandler(NetconfBatchRetryService netconfBatchRetryService, HazelcastInstance hazelcastInstance) {
+        this.netconfBatchRetryService = netconfBatchRetryService;
         this.hazelcastInstance = hazelcastInstance;
     }
 
     @SqsListener(value = "probe.commands", deletionPolicy = SqsMessageDeletionPolicy.ON_SUCCESS)
-    public void handle(@Payload ProbeJobMessage message, @Headers Map<String, String> headers) {
-        String deviceId = message.getDeviceId();
-        String batchId = message.getBatchId();
-        String lockName = "snmp-walk-lock-" + deviceId + ":" + batchId;
-        hazelcastInstance.getLock(lockName).lock();
-        try {
-            snmppWalkJobService.processSnmpWalkJob(message);
-        } finally {
-            hazelcastInstance.getLock(lockName).unlock();
+    public void handle(@Payload ProbeJob job, @Headers SqsMessageHeaders headers) {
+        ILock lock = hazelcastInstance.getLock("snmp-walk-job-lock");
+        if (lock.tryLock(10, TimeUnit.SECONDS)) {
+            try {
+                // process the job
+                netconfBatchRetryService.retryFailedJobs(job.getBatchId());
+            } finally {
+                lock.unlock();
+            }
         }
     }
 }
