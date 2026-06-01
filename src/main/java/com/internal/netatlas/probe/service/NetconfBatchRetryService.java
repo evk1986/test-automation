@@ -5,11 +5,10 @@ import com.internal.netatlas.probe.repository.ProbeJobRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.util.logging.Logger;
+import java.util.List;
 
 @Service
 public class NetconfBatchRetryService {
-    private static final Logger LOGGER = Logger.getLogger(NetconfBatchRetryService.class.getName());
 
     private final ProbeJobRepository probeJobRepository;
 
@@ -18,11 +17,12 @@ public class NetconfBatchRetryService {
         this.probeJobRepository = probeJobRepository;
     }
 
-    public void updateJobStatus(String jobId, String rawResponse) {
-        // Update the job status in the database
-        ProbeJob job = probeJobRepository.findById(jobId).orElseThrow();
-        job.setStatus("SUCCESS");
-        job.setRawResponse(rawResponse);
-        probeJobRepository.save(job);
+    public void retryFailedJobs(String batchId) {
+        List<ProbeJob> failedJobs = probeJobRepository.findByBatchIdAndStatus(batchId, "FAILED");
+        for (ProbeJob job : failedJobs) {
+            // Release lock and retry the job
+            job.setStatus("PENDING");
+            probeJobRepository.save(job);
+        }
     }
 }
