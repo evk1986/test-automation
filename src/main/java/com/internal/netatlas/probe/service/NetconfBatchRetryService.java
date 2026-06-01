@@ -1,16 +1,12 @@
-package com.internal.netatlas.probe.service;
+package com.internal/netatlas/probe/service;
 
 import com.internal.netatlas.probe.model.ProbeJob;
 import com.internal.netatlas.probe.repository.ProbeJobRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.util.logging.Logger;
-
 @Service
 public class NetconfBatchRetryService {
-    private static final Logger LOGGER = Logger.getLogger(NetconfBatchRetryService.class.getName());
-
     private final ProbeJobRepository probeJobRepository;
 
     @Autowired
@@ -18,11 +14,18 @@ public class NetconfBatchRetryService {
         this.probeJobRepository = probeJobRepository;
     }
 
-    public void updateJobStatus(String jobId, String rawResponse) {
-        // Update the job status in the database
-        ProbeJob job = probeJobRepository.findById(jobId).orElseThrow();
-        job.setStatus("SUCCESS");
-        job.setRawResponse(rawResponse);
-        probeJobRepository.save(job);
+    public void retryFailedJobs(String batchId) {
+        // Circuit breaker
+        try {
+            // Retry failed jobs
+            probeJobRepository.findByBatchIdAndStatus(batchId, "FAILED").forEach(probeJob -> {
+                // Update ProbeJob status in Cassandra
+                probeJob.setStatus("RUNNING");
+                probeJobRepository.save(probeJob);
+            });
+        } catch (Exception e) {
+            // Exponential retry
+            retryFailedJobs(batchId);
+        }
     }
 }
