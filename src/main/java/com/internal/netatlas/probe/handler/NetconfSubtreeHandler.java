@@ -1,20 +1,26 @@
 package com.internal.netatlas.probe.handler;
 
-import com.internal.netatlas.probe.model.ProbeJobMessage;
-import org.springframework.cloud.aws.messaging.core.QueueMessagingTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.cloud.aws.messaging.listener.annotation.SqsListener;
+import com.internal.netatlas.probe.service.NetconfHandlerDeploymentService;
+import com.internal.netatlas.probe.model.ProbeJobMessage;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Service
 public class NetconfSubtreeHandler {
-    private final QueueMessagingTemplate queueMessagingTemplate;
 
-    public NetconfSubtreeHandler(QueueMessagingTemplate queueMessagingTemplate) {
-        this.queueMessagingTemplate = queueMessagingTemplate;
+    private static final Logger logger = LoggerFactory.getLogger(NetconfSubtreeHandler.class);
+    private final NetconfHandlerDeploymentService deploymentService;
+
+    public NetconfSubtreeHandler(NetconfHandlerDeploymentService deploymentService) {
+        this.deploymentService = deploymentService;
     }
 
-    public void handleNetconfSubtree(ProbeJobMessage message) {
-        // Implement NETCONF subtree handling logic for Cisco IOS-XR NCS devices
-        // For example, send a NETCONF request to the device and process the response
-        queueMessagingTemplate.convertAndSend("probe.commands", message);
+    @SqsListener("probe.commands")
+    public void handle(ProbeJobMessage message) {
+        logger.info("Received ProbeJobMessage id={}, deviceId={}", message.getId(), message.getDeviceId());
+        deploymentService.deployHandler(message.getBatchId());
+        // In a full implementation a result would be published to an SNS topic here
     }
 }
