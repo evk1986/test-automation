@@ -1,63 +1,88 @@
 package com.internal.netatlas.probe.service;
 
 import com.hazelcast.core.HazelcastInstance;
-import com.hazelcast.core.ILock;
-import com.internal.netatlas.probe.handler.SnmpWalkJobHandler;
+import com.hazelcast.map.IMap;
 import com.internal.netatlas.probe.model.ProbeJobMessage;
+import com.internal.netatlas.probe.model.DeviceSnapshot;
+import com.internal.netatlas.probe.repository.DeviceSnapshotRepository;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
-import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
+import org.springframework.boot.test.context.SpringBootTest;
 
-/**
- * Unit tests for the SNMP walk lock service and its SQS handler.
- */
-public class IntegrationTestSuiteForSnmp {
+import java.time.Instant;
+import java.util.concurrent.TimeUnit;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@SpringBootTest
+class IntegrationTestSuiteForSnmp {
 
     @Mock
     private HazelcastInstance hazelcastInstance;
-
     @Mock
-    private ILock mockLock;
+    private IMap<String, String> lockMap;
+    @Mock
+    private DeviceSnapshotRepository snapshotRepository;
 
     private SnmpWalkLockService snmpWalkLockService;
-
-    private SnmpWalkJobHandler snmpWalkJobHandler;
 
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        when(hazelcastInstance.getLock(anyString())).thenReturn(mockLock);
-        snmpWalkLockService = new SnmpWalkLockService(hazelcastInstance);
-        snmpWalkJobHandler = new SnmpWalkJobHandler(snmpWalkLockService);
+        when(hazelcastInstance.getMap("snmp-walk-locks")).thenReturn(lockMap);
+        snmpWalkLockService = new SnmpWalkLockService(hazelcastInstance, snapshotRepository);
     }
 
-    @Test
-    void testHandlerDelegatesToService() {
-        ProbeJobMessage msg = new ProbeJobMessage();
-        msg.setDeviceId("device-123");
-        // Spy on the service to verify delegation
-        SnmpWalkLockService spyService = spy(snmpWalkLockService);
-        SnmpWalkJobHandler handler = new SnmpWalkJobHandler(spyService);
-        handler.handle(msg);
-        verify(spyService, times(1)).processProbeJob(msg);
-    }
+    @Nested
+    @DisplayName("Lock acquisition and release")
+    class LockBehavior {
+        @Test
+        @DisplayName("Successful lock acquisition persists snapshot and releases lock")
+        void happyPath() throws Exception {
+            // arrange
+            ProbeJobMessage msg = new ProbeJobMessage();
+            msg.setJobId("BATCH-PRB-20240523-USE1-01");
+            msg.setDeviceId("device-123");
+            msg.setProtocol("SNMP");
+            when(lockMap.tryLock(eq("device-123"), eq(5L), eq(TimeUnit.SECONDS))).thenReturn(true);
 
-    @Test
-    void testLockAcquisitionAndRelease() {
-        ProbeJobMessage msg = new ProbeJobMessage();
-        msg.setDeviceId("device-456");
-        snmpWalkLockService.processProbeJob(msg);
-        // Verify that lock was obtained with the correct key
-        ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);
-        verify(hazelcastInstance, times(1)).getLock(keyCaptor.capture());
-        assertEquals("snmp-walk-device-456", keyCaptor.getValue());
-        // Verify lock lifecycle
-        verify(mockLock, times(1)).lock();
-        verify(mockLock, times(1)).unlock();
+            // act
+            snmpWalkLockService.processSnmpWalk(msg);
+
+            // assert snapshot persisted
+            ArgumentCaptor<DeviceSnapshot> captor = ArgumentCaptor.forClass(DeviceSnapshot.class);
+            verify(snapshotRepository, times(1)).save(captor.capture());
+            DeviceSnapshot saved = captor.getValue();
+            assertEquals("device-123", saved.getDeviceId());
+            assertEquals("SNMP", saved.getProtocol());
+            assertNotNull(saved.getRawPayload());
+            assertNotNull(saved.getCollectedAt());
+
+            // assert lock released
+            verify(lockMap, times(1)).unlock("device-123");
+        }
+
+        @Test
+        @DisplayName("Lock not acquired throws IllegalStateException and does not persist snapshot")
+        void lockUnavailable() throws Exception {
+            ProbeJobMessage msg = new ProbeJobMessage();
+            msg.setJobId("BATCH-PRB-20240523-USE1-01");
+            msg.setDeviceId("device-456");
+            msg.setProtocol("SNMP");
+            when(lockMap.tryLock(eq("device-456"), eq(5L), eq(TimeUnit.SECONDS))).thenReturn(false);
+
+            IllegalStateException ex = assertThrows(IllegalStateException.class, () ->
+                    snmpWalkLockService.processSnmpWalk(msg));
+            assertTrue(ex.getMessage().contains("SNMP walk lock not acquired"));
+
+            verify(snapshotRepository, never()).save(any());
+            verify(lockMap, never()).unlock(any());
+        }
     }
 }
