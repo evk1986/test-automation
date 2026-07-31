@@ -1,58 +1,32 @@
 package com.internal.netatlas.probe.service;
 
 import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.stereotype.Service;
 
 /**
- * Service responsible for recording protocol‑specific failure metrics.
- * Call {@link #recordFailure(Protocol)} whenever a protocol interaction ends in error.
+ * Service responsible for recording protocol failure metrics.
+ * The metric name is {@code probe.protocol.failures} and is tagged by the protocol name.
  */
 @Service
 public class ProtocolFailureMetricsService {
 
-    public enum Protocol { NETCONF, SSH, SNMP, EAPI, GRPC }
+    private final MeterRegistry meterRegistry;
 
-    private final Counter netconfFailureCounter;
-    private final Counter sshFailureCounter;
-    private final Counter snmpFailureCounter;
-    private final Counter eapiFailureCounter;
-    private final Counter grpcFailureCounter;
-
-    public ProtocolFailureMetricsService(Counter netconfFailureCounter,
-                                         Counter sshFailureCounter,
-                                         Counter snmpFailureCounter,
-                                         Counter eapiFailureCounter,
-                                         Counter grpcFailureCounter) {
-        this.netconfFailureCounter = netconfFailureCounter;
-        this.sshFailureCounter = sshFailureCounter;
-        this.snmpFailureCounter = snmpFailureCounter;
-        this.eapiFailureCounter = eapiFailureCounter;
-        this.grpcFailureCounter = grpcFailureCounter;
+    public ProtocolFailureMetricsService(MeterRegistry meterRegistry) {
+        this.meterRegistry = meterRegistry;
     }
 
     /**
-     * Increment the failure counter for the supplied protocol.
+     * Increment the failure counter for the given protocol.
+     *
+     * @param protocol the protocol that failed (e.g., SNMP, NETCONF)
      */
-    public void recordFailure(Protocol protocol) {
-        switch (protocol) {
-            case NETCONF:
-                netconfFailureCounter.increment();
-                break;
-            case SSH:
-                sshFailureCounter.increment();
-                break;
-            case SNMP:
-                snmpFailureCounter.increment();
-                break;
-            case EAPI:
-                eapiFailureCounter.increment();
-                break;
-            case GRPC:
-                grpcFailureCounter.increment();
-                break;
-            default:
-                // No‑op for unknown protocols – should never happen
-                break;
-        }
+    public void recordFailure(String protocol) {
+        Counter counter = Counter.builder("probe.protocol.failures")
+                .description("Number of protocol failures observed by Device-Probe")
+                .tag("protocol", protocol)
+                .register(meterRegistry);
+        counter.increment();
     }
 }
