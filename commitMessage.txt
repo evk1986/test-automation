@@ -1,0 +1,9 @@
+feat(tes-137): add NETCONF handler, service and unit tests for lock validation
+
+Implemented ProbeTestsNetconfHandler with SQS listener on `probe.commands`, integrated Micrometer counters, and delegating to ProbeTestsNetconfService.
+
+Added ProbeTestsNetconfService that acquires a Hazelcast distributed lock per job, executes the NetconfAdapter, and records lock acquisition/release and session metrics.
+
+Created comprehensive Mockito‑based unit test covering success, non‑NETCONF filtering, and failure scenarios.
+
+Included test plan, runbook, and onboarding documentation for TES‑137.
