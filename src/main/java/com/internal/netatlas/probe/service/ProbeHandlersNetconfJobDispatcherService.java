@@ -9,8 +9,8 @@ public class ProbeHandlersNetconfJobDispatcherService {
     private static final Logger log = LoggerFactory.getLogger(ProbeHandlersNetconfJobDispatcherService.class);
 
     public String execute() {
-        log.info("Add NETCONF subtree handler for Cisco IOS-XR NCS devices (PRB-4821) — processing");
-        // ## Description Implement a new NETCONF subtree handler to retrieve interface and routing data from Cisco IOS‑XR NCS devi
-        return "TES-98: processing complete";
+        log.info("Implement NETCONF subtree handler for Cisco IOS-XR NCS devices (PRB-4821) — processing");
+        // ## Description Create a NETCONF subtree parser that extracts system configuration from Cisco IOS‑XR NCS devices and inte
+        return "TES-112: processing complete";
     }
 }

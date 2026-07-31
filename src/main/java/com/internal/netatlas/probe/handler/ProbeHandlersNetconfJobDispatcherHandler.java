@@ -15,7 +15,7 @@ public class ProbeHandlersNetconfJobDispatcherHandler {
 
     // Queue: device-probe-jobs
     public void handle(String payload) {
-        log.info("Add NETCONF subtree handler for Cisco IOS-XR NCS devices (PRB-4821) — received payload");
+        log.info("Implement NETCONF subtree handler for Cisco IOS-XR NCS devices (PRB-4821) — received payload");
         service.execute();
     }
 }
