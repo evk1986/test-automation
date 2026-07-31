@@ -15,7 +15,7 @@ class ProbeHandlersNetconfJobDispatcherHandlerTest {
 
     @Test
     void delegatesToService() {
-        handler.handle("TES-98-test-payload");
+        handler.handle("TES-112-test-payload");
         verify(service).execute();
     }
 }
