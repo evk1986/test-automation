@@ -6,5 +6,5 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 public interface DeviceSnapshotRepository extends CassandraRepository<DeviceSnapshot, String> {
-    // No custom methods needed for the lock‑validation test
+    // No custom methods required for the current use‑case
 }
