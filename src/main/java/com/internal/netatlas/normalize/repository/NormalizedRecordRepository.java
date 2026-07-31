@@ -1,8 +1,9 @@
 package com.internal.netatlas.normalize.repository;
 
 import com.internal.netatlas.normalize.model.NormalizedRecord;
-import org.springframework.data.repository.CrudRepository;
+import org.springframework.data.cassandra.repository.CassandraRepository;
+import org.springframework.stereotype.Repository;
 
-public interface NormalizedRecordRepository extends CrudRepository<NormalizedRecord, Long> {
-    NormalizedRecord findByDeviceFamily(String deviceFamily);
+@Repository
+public interface NormalizedRecordRepository extends CassandraRepository<NormalizedRecord, String> {
 }

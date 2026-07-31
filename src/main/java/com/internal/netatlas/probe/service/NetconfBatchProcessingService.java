@@ -1,66 +1,33 @@
 package com.internal.netatlas.probe.service;
 
-import com.internal.netatlas.probe.model.ProbeJob;
-import com.internal.netatlas.probe.model.ProbeJobStatus;
-import com.internal.netatlas.probe.repository.ProbeJobRepository;
-import com.hazelcast.core.HazelcastInstance;
-import com.hazelcast.core.ILock;
+import com.internal.netatlas.normalize.model.NormalizedRecord;
+import com.internal.netatlas.normalize.repository.NormalizedRecordRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.stereotype.Service;
-
-import java.util.List;
 
 @Service
 public class NetconfBatchProcessingService {
 
-    private final ProbeJobRepository probeJobRepository;
-    private final HazelcastInstance hazelcastInstance;
+    private final NormalizedRecordRepository repository;
     private final MeterRegistry meterRegistry;
 
-    public NetconfBatchProcessingService(ProbeJobRepository probeJobRepository,
-                                         HazelcastInstance hazelcastInstance,
-                                         MeterRegistry meterRegistry) {
-        this.probeJobRepository = probeJobRepository;
-        this.hazelcastInstance = hazelcastInstance;
+    public NetconfBatchProcessingService(NormalizedRecordRepository repository, MeterRegistry meterRegistry) {
+        this.repository = repository;
         this.meterRegistry = meterRegistry;
     }
 
     /**
-     * Processes all pending NETCONF jobs for a given batch. The method is idempotent – a distributed
-     * Hazelcast lock guarantees that only one instance processes the batch at a time.
+     * Persists the given NormalizedRecord into Cassandra and records a metric snapshot.
+     *
+     * @param record the DTO to persist
+     * @return the persisted entity
      */
-    public void processBatch(String batchId) {
-        String lockName = "netconf-batch-" + batchId;
-        ILock lock = hazelcastInstance.getLock(lockName);
-        if (!lock.tryLock()) {
-            // Another pod is already handling this batch.
-            return;
-        }
-        try {
-            List<ProbeJob> pendingJobs = probeJobRepository
-                    .findByBatchIdAndStatus(batchId, ProbeJobStatus.PENDING);
-            for (ProbeJob job : pendingJobs) {
-                boolean success = simulateNetconfCall(job);
-                if (success) {
-                    job.setStatus(ProbeJobStatus.SUCCESS);
-                } else {
-                    job.setStatus(ProbeJobStatus.FAILED);
-                    job.setLastErrorMessage("NETCONF execution failed");
-                }
-                probeJobRepository.save(job);
-            }
-            // Emit a batch‑level metric for observability.
-            meterRegistry.counter("netconf.batch.processed", "batchId", batchId).increment();
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    /**
-     * Minimal stub that pretends a NETCONF call always succeeds. In a real implementation this would
-     * delegate to a NetconfAdapter that talks to the device.
-     */
-    private boolean simulateNetconfCall(ProbeJob job) {
-        return true;
+    public NormalizedRecord persistAndRecord(NormalizedRecord record) {
+        NormalizedRecord saved = repository.save(record);
+        // Record a counter metric for each persisted record, tagging by device family (canonical type)
+        meterRegistry.counter("netconf.normalized.record.persisted",
+                "deviceFamily", record.getCanonicalType() != null ? record.getCanonicalType() : "unknown")
+                .increment();
+        return saved;
     }
 }
