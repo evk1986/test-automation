@@ -7,25 +7,24 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-@Service
+@Service;
 public class ProbeLockProbeMetricsHandler {
 
     private static final Logger log = LoggerFactory.getLogger(ProbeLockProbeMetricsHandler.class);
+    private final ProbeLockProbeMetricsService service;
 
-    private final ProbeLockProbeMetricsService probeService;
-
-    public ProbeLockProbeMetricsHandler(ProbeLockProbeMetricsService probeService) {
-        this.probeService = probeService;
+    public ProbeLockProbeMetricsHandler(ProbeLockProbeMetricsService service) {
+        this.service = service;
     }
 
     @SqsListener("probe.commands")
-    public void handle(ProbeJob message) {
-        log.info("Received probe command for job ID: {}, device: {}, protocol: {}",
-                message.getId(), message.getDeviceId(), message.getProtocol());
-
-        boolean processed = probeService.processProbeWithLock(message);
-        if (!processed) {
-            log.warn("Probe execution postponed or skipped for job ID: {}", message.getId());
+    public void handle(ProbeJob job) {
+        log.info("Received probe job message for deviceId={}, protocol={}", job.getDeviceId(), job.getProtocol());
+        boolean executed = service.executeWithLockAndMetrics(job, () -> {
+            log.info("Executing device probe task for deviceId={} using protocol={}", job.getDeviceId(), job.getProtocol());
+        });
+        if (!executed) {
+            log.warn("Probe job execution failed or was locked out for jobId={}", job.getId());
         }
     }
 }

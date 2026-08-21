@@ -4,8 +4,7 @@ import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.cp.CPSubsystem;
 import com.hazelcast.cp.lock.FencedLock;
 import com.internal.netatlas.probe.model.ProbeJob;
-import com.internal.netatlas.probe.repository.ProbeJobRepository;
-import io.micrometer.core.instrument.Counter;
+import com.internal.netatlas.probe.repository.ProbeLockProbeMetricsRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -16,10 +15,12 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.concurrent.TimeUnit;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
+import static org.junit.jupiter.api.Assertions.fail;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -36,7 +37,7 @@ class ProbeLockProbeMetricsServiceTest {
     private FencedLock fencedLock;
 
     @Mock
-    private ProbeJobRepository probeJobRepository;
+    private ProbeLockProbeMetricsRepository repository;
 
     private MeterRegistry meterRegistry;
     private ProbeLockProbeMetricsService service;
@@ -45,68 +46,40 @@ class ProbeLockProbeMetricsServiceTest {
     void setUp() {
         meterRegistry = new SimpleMeterRegistry();
         when(hazelcastInstance.getCPSubsystem()).thenReturn(cpSubsystem);
-        when(cpSubsystem.getLock(any())).thenReturn(fencedLock);
-
-        service = new ProbeLockProbeMetricsService(hazelcastInstance, meterRegistry, probeJobRepository);
+        when(cpSubsystem.getFencedLock(anyString())).thenReturn(fencedLock);
+        service = new ProbeLockProbeMetricsService(hazelcastInstance, meterRegistry, repository);
     }
 
     @Test
-    void testProcessProbeWithLock_Success() throws InterruptedException {
-        when(fencedLock.tryLock(anyLong(), any(TimeUnit.class))).thenReturn(true);
+    void testExecuteWithLockSuccess() throws InterruptedException {
+        ProbeJob job = new ProbeJob("JOB-NETCONF-4821", "DEV-ASR-9001", "NETCONF", "us-east-1", "BATCH-PRB-20240523-USE1-01", "PENDING", 0, null);
+        when(fencedLock.tryLock(5, TimeUnit.SECONDS)).thenReturn(true);
         when(fencedLock.isLockedByCurrentThread()).thenReturn(true);
 
-        ProbeJob job = new ProbeJob();
-        job.setId("JOB-NETCONF-4821");
-        job.setDeviceId("router-cisco-01");
-        job.setProtocol("NETCONF");
-        job.setBatchId("BATCH-PRB-20240523-USE1-01");
-        job.setAttemptCount(0);
-
-        boolean result = service.processProbeWithLock(job);
+        boolean result = service.executeWithLockAndMetrics(job, () -> {
+            log.info("Executing mock task inside lock");
+        });
 
         assertTrue(result);
-        verify(probeJobRepository).save(job);
+        assertEquals("SUCCESS", job.getStatus());
         verify(fencedLock).unlock();
-
-        Counter counter = meterRegistry.find("probe.protocol.execution.success").counter();
-        assertTrue(counter != null && counter.count() == 1.0);
+        verify(repository, times(2)).save(job);
     }
 
     @Test
-    void testProcessProbeWithLock_LockAcquisitionFailure() throws InterruptedException {
-        when(fencedLock.tryLock(anyLong(), any(TimeUnit.class))).thenReturn(false);
+    void testExecuteWithLockFailureIncrementsMetric() throws InterruptedException {
+        ProbeJob job = new ProbeJob("JOB-NETCONF-4821", "DEV-ASR-9001", "SNMP", "us-east-1", "BATCH-PRB-20240523-USE1-01", "PENDING", 0, null);
+        when(fencedLock.tryLock(5, TimeUnit.SECONDS)).thenReturn(false);
 
-        ProbeJob job = new ProbeJob();
-        job.setId("JOB-NETCONF-4821");
-        job.setDeviceId("router-cisco-01");
-        job.setProtocol("NETCONF");
-        job.setBatchId("BATCH-PRB-20240523-USE1-01");
-
-        boolean result = service.processProbeWithLock(job);
+        boolean result = service.executeWithLockAndMetrics(job, () -> {
+            fail("Task should not be executed when lock acquisition fails");
+        });
 
         assertFalse(result);
-
-        Counter failureCounter = meterRegistry.find("probe.lock.acquisition.failure").counter();
-        assertTrue(failureCounter != null && failureCounter.count() == 1.0);
-    }
-
-    @Test
-    void testProcessProbeWithLock_ExecutionFailureIncrementsFailureMetric() throws InterruptedException {
-        when(fencedLock.tryLock(anyLong(), any(TimeUnit.class))).thenReturn(true);
-        when(fencedLock.isLockedByCurrentThread()).thenReturn(true);
-
-        ProbeJob job = new ProbeJob();
-        job.setId("JOB-NETCONF-4822");
-        job.setDeviceId("OFFLINE");
-        job.setProtocol("SNMP");
-        job.setBatchId("POLL-RAPID-77402");
-
-        boolean result = service.processProbeWithLock(job);
-
-        assertFalse(result);
-        verify(fencedLock).unlock();
-
-        Counter failureCounter = meterRegistry.find("probe.protocol.execution.failure").counter();
-        assertTrue(failureCounter != null && failureCounter.count() == 1.0);
+        assertEquals("FAILED", job.getStatus());
+        assertEquals(1.0, meterRegistry.get("probe.protocol.failure.count")
+                .tag("protocol", "SNMP")
+                .tag("reason", "LOCK_ACQUISITION_TIMEOUT")
+                .counter().count());
     }
 }
