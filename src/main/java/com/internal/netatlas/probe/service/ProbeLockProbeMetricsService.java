@@ -1,55 +1,107 @@
 package com.internal.netatlas.probe.service;
 
 import com.hazelcast.core.HazelcastInstance;
+import com.hazelcast.cp.lock.FencedLock;
+import com.internal.netatlas.probe.model.ProbeJob;
+import com.internal.netatlas.probe.repository.ProbeJobRepository;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.Lock;
 
 @Service
 public class ProbeLockProbeMetricsService {
 
+    private static final Logger log = LoggerFactory.getLogger(ProbeLockProbeMetricsService.class);
+    private static final long LOCK_WAIT_TIMEOUT_SECONDS = 5;
+
     private final HazelcastInstance hazelcastInstance;
     private final MeterRegistry meterRegistry;
+    private final ProbeJobRepository probeJobRepository;
 
-    public ProbeLockProbeMetricsService(HazelcastInstance hazelcastInstance, MeterRegistry meterRegistry) {
+    public ProbeLockProbeMetricsService(HazelcastInstance hazelcastInstance,
+                                        MeterRegistry meterRegistry,
+                                        ProbeJobRepository probeJobRepository) {
         this.hazelcastInstance = hazelcastInstance;
         this.meterRegistry = meterRegistry;
+        this.probeJobRepository = probeJobRepository;
     }
 
-    public boolean executeWithLock(String batchId, String deviceId, String protocol, String region, Runnable task) {
-        String lockKey = "probe:lock:" + batchId + ":" + deviceId;
-        Lock lock = hazelcastInstance.getCPSubsystem().getLock(lockKey);
+    public boolean processProbeWithLock(ProbeJob job) {
+        String lockKey = "probe-lock-" + job.getDeviceId();
+        FencedLock lock = hazelcastInstance.getCPSubsystem().getLock(lockKey);
+
         boolean acquired = false;
         try {
-            acquired = lock.tryLock(5, TimeUnit.SECONDS);
+            acquired = lock.tryLock(LOCK_WAIT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             if (!acquired) {
-                recordProtocolFailure(protocol, region, "LOCK_TIMEOUT");
+                log.warn("Could not acquire Hazelcast lock for deviceId {} within timeout. Skipping execution.", job.getDeviceId());
+                recordLockAcquisitionFailure(job.getProtocol());
                 return false;
             }
-            task.run();
+
+            log.info("Acquired Hazelcast lock for deviceId: {}, running probe job: {}", job.getDeviceId(), job.getId());
+            job.setStatus("RUNNING");
+            job.setAttemptCount(job.getAttemptCount() + 1);
+            probeJobRepository.save(job);
+
+            executeDeviceProbe(job);
+
+            job.setStatus("SUCCESS");
+            probeJobRepository.save(job);
+            recordProbeSuccess(job.getProtocol());
             return true;
+
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            recordProtocolFailure(protocol, region, "INTERRUPTED");
+            log.error("Probe lock acquisition interrupted for device: {}", job.getDeviceId(), e);
+            recordProbeFailure(job.getProtocol(), "LOCK_INTERRUPTED");
             return false;
         } catch (Exception e) {
-            recordProtocolFailure(protocol, region, "EXECUTION_FAILED");
+            log.error("Error executing probe for device: {}, batch: {}", job.getDeviceId(), job.getBatchId(), e);
+            job.setStatus("FAILED");
+            job.setLastErrorMessage(e.getMessage());
+            probeJobRepository.save(job);
+            recordProbeFailure(job.getProtocol(), e.getClass().getSimpleName());
             return false;
         } finally {
-            if (acquired) {
+            if (acquired && lock.isLockedByCurrentThread()) {
                 lock.unlock();
+                log.info("Released Hazelcast lock for deviceId: {}", job.getDeviceId());
             }
         }
     }
 
-    public void recordProtocolFailure(String protocol, String region, String reason) {
-        Counter.builder("probe.protocol.failures")
+    private void executeDeviceProbe(ProbeJob job) {
+        if ("OFFLINE".equalsIgnoreCase(job.getDeviceId())) {
+            throw new IllegalStateException("Device unreachable via protocol " + job.getProtocol());
+        }
+    }
+
+    private void recordProbeSuccess(String protocol) {
+        Counter.builder("probe.protocol.execution.success")
                 .tag("protocol", protocol != null ? protocol : "UNKNOWN")
-                .tag("region", region != null ? region : "UNKNOWN")
-                .tag("reason", reason != null ? reason : "UNKNOWN")
+                .description("Count of successful device probe executions")
+                .register(meterRegistry)
+                .increment();
+    }
+
+    private void recordProbeFailure(String protocol, String reason) {
+        Counter.builder("probe.protocol.execution.failure")
+                .tag("protocol", protocol != null ? protocol : "UNKNOWN")
+                .tag("reason", reason)
+                .description("Count of failed device probe executions")
+                .register(meterRegistry)
+                .increment();
+    }
+
+    private void recordLockAcquisitionFailure(String protocol) {
+        Counter.builder("probe.lock.acquisition.failure")
+                .tag("protocol", protocol != null ? protocol : "UNKNOWN")
+                .description("Count of failed Hazelcast lock acquisitions due to concurrency")
                 .register(meterRegistry)
                 .increment();
     }

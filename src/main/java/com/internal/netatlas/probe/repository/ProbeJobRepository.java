@@ -1,11 +1,15 @@
-package com.internal/netatlas/probe/repository;
+package com.internal.netatlas.probe.repository;
 
-import com.datastax.driver.core.utils.UUIDs;
 import com.internal.netatlas.probe.model.ProbeJob;
 import org.springframework.data.cassandra.repository.CassandraRepository;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
+
 @Repository
 public interface ProbeJobRepository extends CassandraRepository<ProbeJob, String> {
-    Iterable<ProbeJob> findByBatchIdAndStatus(String batchId, String status);
+
+    List<ProbeJob> findByBatchId(String batchId);
+
+    List<ProbeJob> findByDeviceIdAndStatus(String deviceId, String status);
 }
