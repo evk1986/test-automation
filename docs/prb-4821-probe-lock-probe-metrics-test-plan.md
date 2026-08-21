@@ -1,49 +1,35 @@
-# Test Plan: Device-Probe Lock and Metrics Integration (PRB-4821)
+# Test Plan: Device-Probe Distributed Lock and Metrics Integration (PRB-4821)
 
 ## Summary
-This test plan defines the validation criteria for distributed locking (Hazelcast) and Micrometer metric collection within the `Device-Probe` service under ticket PRB-4821. Specifically, this test plan verifies that when a simulated NETCONF timeout occurs on Cisco IOS-XE devices (`ASR-9010`, `ISR-4451`) during batch execution (`BATCH-PRB-20240523-USE1-01`), the `probe.protocol.failures` metric counter in Prometheus is accurately incremented with appropriate tags (`protocol="NETCONF"`, `reason="timeout"`, `device_family="ios-xe"`), and the corresponding Hazelcast distributed lock is properly released without leaving dangling locks.
+Validation plan for distributed locking (Hazelcast) and Micrometer metrics integration in Device-Probe under PRB-4821. This test suite verifies lock acquisition, timeout handling, and accurate recording of probe.protocol.failures metrics during simulated NETCONF adapter timeouts on Cisco IOS-XE devices.
 
-## Staging Setup
-- **SQS Queue**: `probe.commands` (ingest queue for incoming NETCONF probe jobs)
-- **DLQ Queue**: `platform.results.dlq` (dead-letter queue for exhausted retries)
-- **Cassandra Table**: `netatlas_probe.probe_jobs` (stores state transitions for `ProbeJob` and execution snapshots)
-- **Hazelcast Cluster**: 3-node Hazelcast cluster in `staging` with distributed lock map `probe-execution-locks`
-- **Actuator & Prometheus Endpoint**: `http://probe-worker.staging.internal:8080/actuator/prometheus`
-- **Target Device Types**: Cisco IOS-XE (`ASR-9010`, `ISR-4451`), Cisco IOS-XR (`NCS-5501`)
-- **Environment**: `staging` (AWS region `us-east-1`)
+## Test cases
+1. **Hazelcast Distributed Lock Acquisition & Release**
+   - Dispatch JOB-NETCONF-4821 for Cisco IOS-XE target (10.240.12.45) across concurrent worker pods.
+   - Verify only one worker acquires lock lock:probe:10.240.12.45 in Hazelcast IMDG.
+   - Confirm lock releases cleanly after protocol command execution completes.
 
-## Test Cases
+2. **NETCONF Protocol Timeout & Micrometer Counter Increment**
+   - Inject a 15-second response delay on NETCONF port 830 for target device 10.240.12.46 in staging.
+   - Execute probe job via command queue probe.commands for batch BATCH-PRB-20240523-USE1-01.
+   - Observe circuit breaker trip on timeout and execution fallback to error handling.
+   - Query Prometheus endpoint /actuator/prometheus for metric probe.protocol.failures{protocol="NETCONF",vendor="Cisco-IOS-XE",reason="TIMEOUT"}.
+   - Confirm metric counter increments by exactly 1 per failed attempt.
 
-### 1. NETCONF Connection Timeout Metric Increment
-- **Procedure**:
-  1. Inject an artificial socket latency/timeout (15,000ms) on mock Cisco IOS-XE target (`ASR-9010`, job ID `JOB-NETCONF-4821`).
-  2. Dispatch `ProbeJobMessage` via SQS queue `probe.commands` for batch `BATCH-PRB-20240523-USE1-01`.
-  3. Query Prometheus endpoint `/actuator/prometheus` or execute PromQL:
-     `sum(increase(probe_protocol_failures_total{protocol="NETCONF",reason="timeout"}[5m]))`
-- **Expected Outcome**: The metric `probe_protocol_failures_total{protocol="NETCONF",reason="timeout",device_family="ios-xe"}` increases by exactly 1. Cassandra record `ProbeJob` updates status to `FAILED` with `lastErrorMessage` capturing `NetconfSocketTimeoutException`.
+3. **DLQ Routing & Metrics Retention**
+   - Exceed retry budget (3 attempts) on persistent NETCONF timeout.
+   - Verify job status updates to DLQ in Cassandra table probe_jobs.
+   - Verify dead-letter message arrives in SQS queue platform.results.dlq.
+   - Verify probe.protocol.failures counter reflects total failed retry attempts (3).
 
-### 2. Distributed Lock Release Verification Upon Timeout Failure
-- **Procedure**:
-  1. Acquire lock key `lock:device:ASR-9010` in Hazelcast map `probe-execution-locks` during probe execution.
-  2. Trigger NETCONF command execution failure via device endpoint simulated drop.
-  3. Inspect Hazelcast IMap `probe-execution-locks` status via Consul health route and Hazelcast Management Center API `/hazelcast/rest/maps/probe-execution-locks/lock:device:ASR-9010`.
-- **Expected Outcome**: The lock `lock:device:ASR-9010` is released cleanly within the `finally` block of the execution service. No lock leak is observed, allowing subsequent retry attempts.
+## Staging setup
+- **SQS Command Queue**: probe.commands
+- **SQS DLQ Queue**: platform.results.dlq
+- **Cassandra Keyspace/Table**: netatlas_probe.probe_jobs
+- **Actuator Prometheus Endpoint**: http://probe-worker-service.staging.netatlas.internal:8081/actuator/prometheus
+- **Hazelcast Cluster**: hazelcast-dev-use1.staging.netatlas.internal:5701
 
-### 3. Metric Tagging Consistency Across Protocol Failure Categories
-- **Procedure**:
-  1. Execute a batch of 10 NETCONF probe jobs, forcing 3 authentication failures, 4 connection timeouts, and 3 successful responses.
-  2. Query Actuator Prometheus endpoint `/actuator/prometheus` for metric `probe_protocol_failures_total`.
-- **Expected Outcome**: Prometheus reports `probe_protocol_failures_total{protocol="NETCONF",reason="auth_failure"}` count incremented by 3, `probe_protocol_failures_total{protocol="NETCONF",reason="timeout"}` count incremented by 4, and `probe_protocol_success_total{protocol="NETCONF"}` count incremented by 3.
-
-### 4. SQS Retry Budget and DLQ Routing on Persistent Timeout
-- **Procedure**:
-  1. Set attempt count to maximum retry budget (3) for job `JOB-NETCONF-4821`.
-  2. Trigger final NETCONF timeout execution on `probe.commands`.
-- **Expected Outcome**: Message is routed to `platform.results.dlq`. Hazelcast lock is unlocked, and Cassandra status is marked as `DLQ`.
-
-## Pass Criteria
-1. The metric `probe.protocol.failures` is exposed via Micrometer `/actuator/prometheus` and increments synchronously on NETCONF session timeouts.
-2. Prometheus tags `protocol`, `reason`, and `device_family` are correctly populated without null or missing values.
-3. Hazelcast distributed lock `probe-execution-locks` is unconditionally released after every failure event.
-4. Cassandra table `probe_jobs` reflects `status="FAILED"` and accurate `attemptCount`.
-5. No unhandled exceptions or thread leaks occur in `Device-Probe` application logs.
+## Pass criteria
+- Hazelcast distributed locks prevent duplicate simultaneous probes on the same device IP.
+- Prometheus metric probe.protocol.failures accurately tracks NETCONF timeout failures tagged with protocol, vendor, and error reason.
+- Probe jobs failing due to NETCONF timeout are correctly routed to platform.results.dlq after budget exhaustion.
