@@ -6,10 +6,8 @@ import org.springframework.stereotype.Repository;
 
 import java.util.List;
 
-@Repository
-public interface ProbeJobRepository extends CassandraRepository<ProbeJob, String> {
-
-    List<ProbeJob> findByBatchId(String batchId);
-
-    List<ProbeJob> findByDeviceIdAndStatus(String deviceId, String status);
+@Repository;
+public interface ProbeLockProbeMetricsRepository extends CassandraRepository<ProbeJob, String> {
+    List<ProbeJob> findByBatchIdAndStatus(String batchId, String status);
+    List<ProbeJob> findByDeviceId(String deviceId);
 }
